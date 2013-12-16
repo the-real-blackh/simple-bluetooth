@@ -1,0 +1,26 @@
+module Network.Bluetooth.Manager where
+
+{-# LANGUAGE ForeignFunctionInterface #-}
+module Network.Bluetooth.HCI (
+        LocalDevice,
+        localDevices
+    ) where
+
+import Control.Exception
+import Data.IORef
+import Foreign
+import Foreign.C
+
+foreign import ccall safe "hci_for_each_dev" hci_for_each_dev
+    :: CInt -> FunPtr (CInt -> CInt -> CLong -> IO CInt) -> CLong -> IO ()
+
+foreign import ccall safe "wrapper" mkVisitDev
+    ::            (CInt -> CInt -> CLong -> IO CInt) ->
+       IO (FunPtr (CInt -> CInt -> CLong -> IO CInt))
+
+newtype Adapter = Adapter CInt
+
+localDevices :: IO [LocalDevice]
+localDevices = do
+    devs <- newIORef []
+    cb <- mkVisitDev $ \
