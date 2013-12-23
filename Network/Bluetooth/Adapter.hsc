@@ -34,11 +34,15 @@ foreign import ccall safe "hci_open_dev" hci_open_dev
 openDev :: CInt -> IO Adapter
 openDev dev_id = do
     ret <- hci_open_dev dev_id
-    when (ret < 0) $ do
-        Errno errno <- getErrno
-        err <- peekCString (strerror errno)
-        throwIO $ BluetoothException err
-    pure $ Adapter dev_id ret
+    if ret < 0 then do
+        errno@(Errno errno_) <- getErrno
+        if errno == eINTR
+            then openDev dev_id
+            else do
+                err <- peekCString (strerror errno_)
+                throwIO $ BluetoothException err
+      else
+        pure $ Adapter dev_id ret
 
 allAdapters :: IO [Adapter]
 allAdapters = do
@@ -60,7 +64,9 @@ defaultAdapter = do
     ret <- hci_get_route nullPtr
     if ret < 0 then do
         errno@(Errno errno_) <- getErrno
-        if errno == eNODEV
+        if errno == eINTR
+            then defaultAdapter
+          else if errno == eNODEV
             then pure Nothing
             else do
                 err <- peekCString (strerror errno_)
@@ -83,29 +89,24 @@ instance Storable InquiryInfo where
     poke _ _ = fail "InquiryInfo.poke not defined"
 
 discover :: Adapter -> IO [Device]
-discover a@(Adapter dev_id _) =
-    allocaArray 255 $ \ppDevs -> do
-        poke ppDevs nullPtr
-        n <- hci_inquiry dev_id 8 0 nullPtr ppDevs (#const IREQ_CACHE_FLUSH)
-        when (n < 0) $ do
-            Errno errno <- getErrno
-            err <- peekCString (strerror errno)
-            throwIO $ BluetoothException err
-        pDevs <- peek ppDevs
-        iis <- peekArray (fromIntegral n) pDevs
-        free pDevs
-        pure $ map (Device a . iiAddr) iis
-
-{-
-foreign import ccall unsafe "hci_devinfo" hci_devinfo
-    
-            if (hci_devinfo(handle, &di) < 0) {
-                char text[129];
-                sprintf(text, "Can't get device info for device %d: %s", (int)handle,
-                    getLastErrorMessage());
-                THROW(BluetoothException,text);
-        }
-
-adapterAddr :: Adapter -> IO BDAddr
-adapterAddr (Adapter dev_id) = do
--}
+discover a@(Adapter dev_id _) = go 0  -- (#const IREQ_CACHE_FLUSH)
+  where
+    go flags = do
+        mDevices <- allocaArray 255 $ \ppDevs -> do
+            poke ppDevs nullPtr
+            n <- hci_inquiry dev_id 8 255 nullPtr ppDevs flags
+            if n < 0 then do
+                errno@(Errno errno_) <- getErrno
+                if errno == eINTR
+                    then pure Nothing
+                    else do
+                        err <- peekCString (strerror errno_)
+                        throwIO $ BluetoothException err
+              else do
+                pDevs <- peek ppDevs
+                iis <- peekArray (fromIntegral n) pDevs
+                free pDevs
+                pure $ Just $ map (Device a . iiAddr) iis
+        case mDevices of
+            Just devices -> pure devices
+            Nothing      -> go 0  -- eINTR ? Retry.
