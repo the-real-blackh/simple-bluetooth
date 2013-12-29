@@ -32,6 +32,16 @@ instance Show BDAddr where
       where
         dig2 = map toUpper . reverse . take 2 . reverse . ('0':) 
 
+instance Read BDAddr where
+    readsPrec _ t = go t (6 :: Int) []
+      where
+        go t n acc = case readHex t of
+            (x, t'):_ -> case (n, t') of
+                (1, _)       -> [(BDAddr (B.pack (x:acc)), t')]
+                (_, ':':t'') -> go t'' (n-1) (x:acc)
+                _ -> []
+            _ -> []
+
 instance Storable BDAddr where
     sizeOf _ = (#const sizeof(bdaddr_t))
     alignment _ = error "BDAddr.alignment not defined"
