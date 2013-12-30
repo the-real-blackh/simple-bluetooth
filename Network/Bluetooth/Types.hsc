@@ -22,7 +22,7 @@ foreign import ccall unsafe "strerror" strerror
 
 data Adapter = Adapter CInt CInt deriving (Eq, Ord, Show)
 
-data BluetoothException = BluetoothException String deriving (Show, Typeable)
+data BluetoothException = BluetoothException String String deriving (Show, Typeable)
 instance Exception BluetoothException
 
 newtype BDAddr = BDAddr ByteString deriving (Eq, Ord)

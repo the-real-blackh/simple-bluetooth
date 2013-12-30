@@ -53,7 +53,7 @@ deviceName dev@(Device (Adapter _ dd) (BDAddr bs)) = do
             then deviceName dev
             else do
                 err <- peekCString (strerror errno_)
-                throwIO $ BluetoothException err
+                throwIO $ BluetoothException "deviceName" err
       else
         return $ B.takeWhile (/= 0) bs0
   where
@@ -86,7 +86,7 @@ foreign import ccall unsafe "connect"
 openRFCOMM :: Device -> Word8 -> IO RFCOMMSocket
 openRFCOMM dev@(Device _ (BDAddr bdaddr)) channel = do
     s <- socket AF_BLUETOOTH Stream (#const BTPROTO_RFCOMM)
-    connect s
+    connect s `onException` sClose s
   where
     connect s = do
         let fd = fdSocket s
@@ -97,36 +97,37 @@ openRFCOMM dev@(Device _ (BDAddr bdaddr)) channel = do
             errno@(Errno errno_) <- getErrno
             case errno of
                 _ | errno == eINTR -> connect s
+                _ | errno == eOK -> return $ RFCOMMSocket s
                 _ | errno == eINPROGRESS -> do
-                   threadWaitWrite (fromIntegral fd)
-                   errno_ <- getSocketOption s SoError
-                   if (errno_ == 0)
+                    threadWaitWrite (fromIntegral fd)
+                    errno@(Errno errno_) <- Errno . fromIntegral <$> getSocketOption s SoError
+                    if errno == eOK
                         then return $ RFCOMMSocket s
                         else do
-                            err <- peekCString (strerror $ fromIntegral errno_)
-                            throwIO $ BluetoothException err
+                            err <- peekCString (strerror errno_)
+                            throwIO $ BluetoothException "openRFCOMM" err
                 _ -> do
                     err <- peekCString (strerror errno_)
-                    throwIO $ BluetoothException err
+                    throwIO $ BluetoothException "openRFCOMM" err
           else
             return $ RFCOMMSocket s
 
 recvRFCOMM :: RFCOMMSocket -> Int -> IO ByteString
 recvRFCOMM (RFCOMMSocket s) n = NB.recv s n
   `catch` \exc ->
-     throwIO (BluetoothException (show (exc :: IOException)))
+     throwIO (BluetoothException "recvRFCOMM" (show (exc :: IOException)))
 
 sendRFCOMM :: RFCOMMSocket -> ByteString -> IO Int
 sendRFCOMM (RFCOMMSocket s) txt = NB.send s txt
   `catch` \exc ->
-     throwIO (BluetoothException (show (exc :: IOException)))
+     throwIO (BluetoothException "sendRFCOMM" (show (exc :: IOException)))
 
 sendAllRFCOMM :: RFCOMMSocket -> ByteString -> IO ()
 sendAllRFCOMM (RFCOMMSocket s) txt = NB.sendAll s txt
   `catch` \exc ->
-     throwIO (BluetoothException (show (exc :: IOException)))
+     throwIO (BluetoothException "sendAllRFCOMM" (show (exc :: IOException)))
 
 closeRFCOMM :: RFCOMMSocket -> IO ()
 closeRFCOMM (RFCOMMSocket s) = sClose s
   `catch` \exc ->
-     throwIO (BluetoothException (show (exc :: IOException)))
+     throwIO (BluetoothException "close" (show (exc :: IOException)))

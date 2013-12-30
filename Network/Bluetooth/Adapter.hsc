@@ -40,7 +40,7 @@ openDev dev_id = do
             then openDev dev_id
             else do
                 err <- peekCString (strerror errno_)
-                throwIO $ BluetoothException err
+                throwIO $ BluetoothException "openDev" err
       else
         pure $ Adapter dev_id ret
 
@@ -70,7 +70,7 @@ defaultAdapter = do
             then pure Nothing
             else do
                 err <- peekCString (strerror errno_)
-                throwIO $ BluetoothException err
+                throwIO $ BluetoothException "defaultAdapter" err
       else
         Just <$> openDev ret
 
@@ -101,7 +101,7 @@ discover a@(Adapter dev_id _) = go 0  -- (#const IREQ_CACHE_FLUSH)
                     then pure Nothing
                     else do
                         err <- peekCString (strerror errno_)
-                        throwIO $ BluetoothException err
+                        throwIO $ BluetoothException "discover" err
               else do
                 pDevs <- peek ppDevs
                 iis <- peekArray (fromIntegral n) pDevs
