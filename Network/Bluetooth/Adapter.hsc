@@ -8,7 +8,6 @@ module Network.Bluetooth.Adapter (
 
 #if defined(mingw32_HOST_OS)
 #include <windows.h>
-#include "Adapter_win.h"
 #else
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
@@ -17,6 +16,9 @@ module Network.Bluetooth.Adapter (
 
 import Network.Bluetooth.Device
 import Network.Bluetooth.Types
+#if defined(mingw32_HOST_OS)
+import Network.Bluetooth.Win32
+#endif
 import qualified Data.ByteString.Internal as BI
 
 import Control.Applicative
@@ -98,55 +100,7 @@ defaultAdapter = do
         Just <$> openDev ret
 #endif
 
-#if defined(mingw32_HOST_OS)
-data SOCKADDR_BTH = SOCKADDR_BTH {
-    saFamily :: USHORT,
-    saAddr   :: BluetoothAddr,
-    saPort   :: LONG
-  }
-  deriving Show
-
-instance Storable SOCKADDR_BTH where
-    sizeOf _ = (#const sizeof(SockAddrBTH))
-    alignment _ = alignment (undefined :: Word64)
-    poke _ _ = fail "SOCKADDR_BTH.poke not defined"
-    peek p = SOCKADDR_BTH <$> peek (p `plusPtr` (#const offsetof(SockAddrBTH,addressFamily)))
-                          <*> peek (p `plusPtr` (#const offsetof(SockAddrBTH,btAddr)))
-                          <*> peek (p `plusPtr` (#const offsetof(SockAddrBTH,port)))
-
-data WSAQUERYSET = WSAQUERYSET {
-    qsSize                :: DWORD,
-    qsNameSpace           :: DWORD,
-    qsNumberOfCsAddrs     :: DWORD,
-    qsCsAddrs             :: Ptr SOCKADDR_BTH,
-    qsBlob                :: Ptr Word8
-  }
-  deriving Show
-
-instance Storable WSAQUERYSET where
-    sizeOf _ = (#const sizeof(WSAQUERYSET))
-    alignment _ = alignment (undefined :: Word64)
-    poke p qs = do
-        BI.memset (castPtr p) 0 (fromIntegral $ sizeOf qs)
-        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwSize))) (qsSize qs)
-        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNameSpace))) (qsNameSpace qs)
-        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNumberOfCsAddrs))) (qsNumberOfCsAddrs qs)
-        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,lpcsaBuffer))) (qsCsAddrs qs)
-        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,lpBlob))) (qsBlob qs)
-    peek p =
-        WSAQUERYSET <$> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwSize)))
-                    <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNameSpace))) 
-                    <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNumberOfCsAddrs)))
-                    <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,lpcsaBuffer)))
-                    <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,lpBlob)))
-
-foreign import stdcall safe "WSALookupServiceBeginA" wsaLookupServiceBegin
-    :: Ptr WSAQUERYSET -> DWORD -> Ptr HANDLE -> IO CInt
-foreign import stdcall safe "WSALookupServiceNextA" wsaLookupServiceNext
-    :: HANDLE -> DWORD -> Ptr DWORD -> Ptr WSAQUERYSET -> IO CInt
-foreign import stdcall safe "WSALookupServiceEnd" wsaLookupServiceEnd
-    :: HANDLE -> IO CInt
-#else
+#if !defined(mingw32_HOST_OS)
 foreign import ccall safe "hci_inquiry" hci_inquiry
     :: CInt -> CInt -> CInt -> Ptr Word8 -> Ptr (Ptr InquiryInfo) -> CLong -> IO CInt
 
@@ -162,49 +116,57 @@ instance Storable InquiryInfo where
     poke _ _ = fail "InquiryInfo.poke not defined"
 #endif
 
--- | The Bluetooth namespace
-nS_BTH :: DWORD
-nS_BTH = 16
-
 discover :: Adapter -> IO [Device]
 #if defined(mingw32_HOST_OS)
 discover a = alloca $ \pqs -> alloca $ \ph -> do
     poke pqs $ WSAQUERYSET {
-        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET),
+        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SOCKADDR_BTH),
         qsNameSpace       = nS_BTH,
         qsNumberOfCsAddrs = 0,
         qsCsAddrs         = nullPtr,
         qsBlob            = nullPtr
       }
-    ret <- wsaLookupServiceBegin pqs ((#const LUP_CONTAINERS) {- .|. (#const LUP_RETURN_ADDR) -}) ph
-    when (ret < 0) $ do
-        errno@(Errno errno_) <- getErrno
-        err <- peekCString (strerror errno_)
-        throwIO $ BluetoothException "discover" err
-    h <- peek ph
-    do
-        let bufSize = 4096
-        alloca $ \pResults -> allocaBytes bufSize $ \buf -> alloca $ \pdwSize -> do
-            poke pdwSize (fromIntegral bufSize)
-            poke pResults $ WSAQUERYSET {
-                qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET),
-                qsNameSpace       = nS_BTH,
-                qsNumberOfCsAddrs = 0,
-                qsCsAddrs         = nullPtr,
-                qsBlob            = nullPtr
-              }
-            let loop acc = do
-                    ret <- wsaLookupServiceNext h (#const LUP_RETURN_ADDR) pdwSize pResults
-                    when (ret < 0) $ do
-                        errno@(Errno errno_) <- getErrno
-                        err <- peekCString (strerror errno_)
-                        throwIO $ BluetoothException "discover" err
-                    results <- peek pResults
-                    addrs <- peekArray (fromIntegral $ qsNumberOfCsAddrs results) (qsCsAddrs results)
-                    return $ reverse (map (Device a . saAddr) addrs) ++ acc
-            reverse <$> loop []
-      `finally`
-        wsaLookupServiceEnd h
+    let flags = (#const LUP_CONTAINERS) .|.
+                (#const LUP_RETURN_ADDR) .|.
+                (#const LUP_FLUSHCACHE)
+    ret <- wsaLookupServiceBegin pqs flags ph
+    none <- if ret < 0 then do
+        err <- getLastError
+        if err == wsaServiceNotFound  -- This error means that there are no devices
+            then pure True
+            else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
+      else
+        pure False
+    if none then
+        return []
+      else do
+        h <- peek ph
+        do
+            let bufSize = 5000
+            alloca $ \pResults -> allocaBytes bufSize $ \buf -> alloca $ \pdwSize -> do
+                poke pResults $ WSAQUERYSET {
+                    qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SOCKADDR_BTH),
+                    qsNameSpace       = nS_BTH,
+                    qsNumberOfCsAddrs = 0,
+                    qsCsAddrs         = nullPtr,
+                    qsBlob            = nullPtr
+                  }
+                let loop acc = do
+                        poke pdwSize (fromIntegral bufSize)
+                        ret <- wsaLookupServiceNext h flags pdwSize pResults
+                        if ret < 0 then do
+                            err <- getLastError
+                            if err == wsaENoMore
+                                then pure $ reverse acc
+                                else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
+                          else do
+                            results <- peek pResults
+                            csAddrs <- peekArray (fromIntegral $ qsNumberOfCsAddrs results) (qsCsAddrs results)
+                            addrs <- mapM (peek . saSockaddr . csaRemoteAddr) csAddrs
+                            loop $ reverse (map (Device a . bthAddr) addrs) ++ acc
+                loop []
+          `finally`
+            wsaLookupServiceEnd h
 #else
 discover a@(Adapter dev_id _) = go 0  -- (#const IREQ_CACHE_FLUSH)
   where

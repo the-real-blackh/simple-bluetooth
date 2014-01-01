@@ -3,7 +3,6 @@ module Network.Bluetooth.Types where
 
 #if defined(mingw32_HOST_OS)
 #include <windows.h>
-#include "Adapter_win.h"
 #else
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
@@ -54,7 +53,7 @@ instance Read BluetoothAddr where
 
 instance Storable BluetoothAddr where
 #if defined(mingw32_HOST_OS)
-    sizeOf _ = (#const sizeof(AddrBTH))
+    sizeOf _ = 8
 #else
     sizeOf _ = (#const sizeof(bdaddr_t))
 #endif
