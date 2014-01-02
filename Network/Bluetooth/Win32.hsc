@@ -11,20 +11,27 @@ import Foreign.C
 import System.Win32.Types
 
 
-data SOCKADDR_BTH = SOCKADDR_BTH {
+data SockAddrBTH = SockAddrBTH {
     bthFamily :: USHORT,
     bthAddr   :: BluetoothAddr,
     bthPort   :: LONG
   }
   deriving Show
 
-instance Storable SOCKADDR_BTH where
+sockAddrBTH :: BluetoothAddr -> Word8 -> SockAddrBTH
+sockAddrBTH addr port = SockAddrBTH aF_BTH addr (fromIntegral port)
+
+instance Storable SockAddrBTH where
     sizeOf _ = 30
     alignment _ = alignment (undefined :: Word64)
-    poke _ _ = fail "SOCKADDR_BTH.poke not defined"
-    peek p = SOCKADDR_BTH <$> peek (p `plusPtr` 0)
-                          <*> peek (p `plusPtr` 2)
-                          <*> peek (p `plusPtr` 10)
+    poke p bth = do
+        BI.memset (castPtr p) 0 (fromIntegral $ sizeOf bth)
+        poke (p `plusPtr` 0) (bthFamily bth)
+        poke (p `plusPtr` 2) (bthAddr bth)
+        poke (p `plusPtr` 26) (bthPort bth)
+    peek p = SockAddrBTH <$> peek (p `plusPtr` 0)
+                         <*> peek (p `plusPtr` 2)
+                         <*> peek (p `plusPtr` 26)
 
 data SOCKET_ADDRESS sa = SOCKET_ADDRESS {
     saSockaddr :: Ptr sa,
@@ -79,9 +86,9 @@ instance Storable (WSAQUERYSET sa) where
                     <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,lpBlob)))
 
 foreign import stdcall safe "WSALookupServiceBeginA" wsaLookupServiceBegin
-    :: Ptr (WSAQUERYSET SOCKADDR_BTH) -> DWORD -> Ptr HANDLE -> IO CInt
+    :: Ptr (WSAQUERYSET SockAddrBTH) -> DWORD -> Ptr HANDLE -> IO CInt
 foreign import stdcall safe "WSALookupServiceNextA" wsaLookupServiceNext
-    :: HANDLE -> DWORD -> Ptr DWORD -> Ptr (WSAQUERYSET SOCKADDR_BTH) -> IO CInt
+    :: HANDLE -> DWORD -> Ptr DWORD -> Ptr (WSAQUERYSET SockAddrBTH) -> IO CInt
 foreign import stdcall safe "WSALookupServiceEnd" wsaLookupServiceEnd
     :: HANDLE -> IO CInt
 
@@ -98,3 +105,5 @@ wsaServiceNotFound = 10108
 wsaENoMore :: ErrCode
 wsaENoMore = 10110
 
+bTHPROTO_RFCOMM :: CInt
+bTHPROTO_RFCOMM = 0x0003

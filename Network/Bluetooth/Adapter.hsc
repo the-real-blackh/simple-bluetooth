@@ -120,7 +120,7 @@ discover :: Adapter -> IO [Device]
 #if defined(mingw32_HOST_OS)
 discover a = alloca $ \pqs -> alloca $ \ph -> do
     poke pqs $ WSAQUERYSET {
-        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SOCKADDR_BTH),
+        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
         qsNameSpace       = nS_BTH,
         qsNumberOfCsAddrs = 0,
         qsCsAddrs         = nullPtr,
@@ -145,7 +145,7 @@ discover a = alloca $ \pqs -> alloca $ \ph -> do
             let bufSize = 5000
             alloca $ \pResults -> allocaBytes bufSize $ \buf -> alloca $ \pdwSize -> do
                 poke pResults $ WSAQUERYSET {
-                    qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SOCKADDR_BTH),
+                    qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
                     qsNameSpace       = nS_BTH,
                     qsNumberOfCsAddrs = 0,
                     qsCsAddrs         = nullPtr,

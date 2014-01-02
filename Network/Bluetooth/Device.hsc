@@ -21,6 +21,9 @@ module Network.Bluetooth.Device (
 #include <stddef.h>
 
 import Network.Bluetooth.Types
+#if defined(mingw32_HOST_OS)
+import Network.Bluetooth.Win32
+#endif
 import Network.Socket
 import qualified Network.Socket.ByteString as NB
 
@@ -69,16 +72,17 @@ deviceName dev@(Device (Adapter _ dd) (BluetoothAddr bs)) = do
 
 data RFCOMMSocket = RFCOMMSocket Socket
 
-#if defined(mingw32_HOST_OS)
-data SockAddrRC = SockAddrRC
-#else
-data SockAddrRC = SockAddrRC Word16 ByteString Word8
+#if !defined(mingw32_HOST_OS)
+data SockAddrBTH = SockAddrBTH Word16 ByteString Word8
 
-instance Storable SockAddrRC where
+sockAddrBTH :: BluetoothAddr -> Word8 -> SockAddrBTH
+sockAddrBTH (BluetoothAddr bs) port = SockAddrBTH (#const AF_BLUETOOTH) bs port
+
+instance Storable SockAddrBTH where
     sizeOf _ = (#const sizeof(struct sockaddr_rc))
     alignment _ = alignment (undefined :: Word64)
-    peek _ = fail "SockAddrRC.peek not defined"
-    poke p (SockAddrRC family bdaddr channel) = do
+    peek _ = fail "SockAddrBTH.peek not defined"
+    poke p (SockAddrBTH family bdaddr channel) = do
         let p_family = p `plusPtr` (#const offsetof(struct sockaddr_rc, rc_family)) :: Ptr ()
             p_bdaddr = p `plusPtr` (#const offsetof(struct sockaddr_rc, rc_bdaddr))
             p_channel = p `plusPtr` (#const offsetof(struct sockaddr_rc, rc_channel))
@@ -86,28 +90,40 @@ instance Storable SockAddrRC where
             1 -> poke (castPtr p_family) (fromIntegral family :: Word8)
             2 -> poke (castPtr p_family) (fromIntegral family :: Word16)
             4 -> poke (castPtr p_family) (fromIntegral family :: Word32)
-            sz -> fail $ "SockAddrRC.poke can't handle size "++show sz
+            sz -> fail $ "SockAddrBTH.poke can't handle size "++show sz
         B.unsafeUseAsCString bdaddr $ \c_bdaddr ->
             B.memcpy p_bdaddr (castPtr c_bdaddr) (B.length bdaddr)
         poke p_channel channel
 #endif
 
+#if defined(mingw32_HOST_OS)
+foreign import stdcall unsafe "connect"
+#else
 foreign import ccall unsafe "connect"
-  c_connect :: CInt -> Ptr SockAddrRC -> CInt -> IO CInt
+#endif
+  c_connect :: CInt -> Ptr SockAddrBTH -> CInt -> IO CInt
+
+#if defined(mingw32_HOST_OS)
+foreign import stdcall unsafe "socket"
+  c_socket :: CInt -> CInt -> CInt -> IO CInt
+#endif
 
 openRFCOMM :: Device -> Word8 -> IO RFCOMMSocket
+openRFCOMM dev@(Device _ addr) channel = do
 #if defined(mingw32_HOST_OS)
-openRFCOMM dev@(Device _ (BluetoothAddr bdaddr)) channel = fail "openRFCOMM not defined"
+    s <- do
+        fd <- c_socket (fromIntegral aF_BTH) (#const SOCK_STREAM) bTHPROTO_RFCOMM
+        mkSocket fd AF_BLUETOOTH Stream bTHPROTO_RFCOMM NotConnected
 #else
-openRFCOMM dev@(Device _ (BluetoothAddr bdaddr)) channel = do
     s <- socket AF_BLUETOOTH Stream (#const BTPROTO_RFCOMM)
+#endif
     connect s `onException` sClose s
   where
     connect s = do
         let fd = fdSocket s
         ret <- alloca $ \p_sarc -> do
-            poke p_sarc (SockAddrRC (#const AF_BLUETOOTH) bdaddr channel)
-            c_connect fd p_sarc (fromIntegral $ sizeOf (undefined :: SockAddrRC))
+            poke p_sarc (sockAddrBTH addr channel)
+            c_connect fd p_sarc (fromIntegral $ sizeOf (undefined :: SockAddrBTH))
         if ret < 0 then do
             errno@(Errno errno_) <- getErrno
             case errno of
@@ -126,7 +142,6 @@ openRFCOMM dev@(Device _ (BluetoothAddr bdaddr)) channel = do
                     throwIO $ BluetoothException "openRFCOMM" err
           else
             return $ RFCOMMSocket s
-#endif
 
 recvRFCOMM :: RFCOMMSocket -> Int -> IO ByteString
 recvRFCOMM (RFCOMMSocket s) n = NB.recv s n
