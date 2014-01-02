@@ -129,6 +129,7 @@ openRFCOMM dev@(Device _ addr) channel = do
 #else
     s <- socket AF_BLUETOOTH Stream (#const BTPROTO_RFCOMM)
 #endif
+    setSocketOption s ReusePort 1
     connect s `onException` sClose s
   where
     connect s = do
