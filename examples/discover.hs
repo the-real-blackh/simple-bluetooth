@@ -17,11 +17,9 @@ main = withSocketsDo $ do
     printDev dev@(Device _ addr) = do
         putStr $ show addr ++ " "
         hFlush stdout
-        {-
         name <- (Just <$> deviceName dev)
             `catch` \(exc :: BluetoothException) -> return Nothing
         print name
-        -}
         putStrLn ""
         hFlush stdout
 

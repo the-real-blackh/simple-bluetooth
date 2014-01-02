@@ -4,8 +4,11 @@ module Network.Bluetooth.Win32 where
 
 import Network.Bluetooth.Types
 
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Internal as BI
 import Control.Applicative
+import Control.Exception
 import Foreign
 import Foreign.C
 import System.Win32.Types
@@ -61,6 +64,7 @@ instance Storable sa => Storable (CSADDR_INFO sa) where
 
 data WSAQUERYSET sa = WSAQUERYSET {
     qsSize                :: DWORD,
+    qsServiceInstanceName :: Ptr TCHAR,
     qsNameSpace           :: DWORD,
     qsNumberOfCsAddrs     :: DWORD,
     qsCsAddrs             :: Ptr (CSADDR_INFO sa),
@@ -74,12 +78,14 @@ instance Storable (WSAQUERYSET sa) where
     poke p qs = do
         BI.memset (castPtr p) 0 (fromIntegral $ sizeOf qs)
         poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwSize))) (qsSize qs)
+        poke (p `plusPtr` (#const offsetof(WSAQUERYSET,lpszServiceInstanceName))) (qsServiceInstanceName qs)
         poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNameSpace))) (qsNameSpace qs)
         poke (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNumberOfCsAddrs))) (qsNumberOfCsAddrs qs)
         poke (p `plusPtr` (#const offsetof(WSAQUERYSET,lpcsaBuffer))) (qsCsAddrs qs)
         poke (p `plusPtr` (#const offsetof(WSAQUERYSET,lpBlob))) (qsBlob qs)
     peek p =
         WSAQUERYSET <$> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwSize)))
+                    <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,lpszServiceInstanceName)))
                     <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNameSpace))) 
                     <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,dwNumberOfCsAddrs)))
                     <*> peek (p `plusPtr` (#const offsetof(WSAQUERYSET,lpcsaBuffer)))
@@ -107,3 +113,60 @@ wsaENoMore = 10110
 
 bTHPROTO_RFCOMM :: CInt
 bTHPROTO_RFCOMM = 0x0003
+
+discover' :: Adapter -> CInt -> IO [(BluetoothAddr, Maybe ByteString)]
+discover' a flags = alloca $ \pqs -> alloca $ \ph -> do
+    poke pqs $ WSAQUERYSET {
+        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
+        qsServiceInstanceName = nullPtr,
+        qsNameSpace       = nS_BTH,
+        qsNumberOfCsAddrs = 0,
+        qsCsAddrs         = nullPtr,
+        qsBlob            = nullPtr
+      }
+    let flags = (#const LUP_CONTAINERS) .|.
+                (#const LUP_RETURN_ADDR) .|.
+                (#const LUP_FLUSHCACHE)
+    ret <- wsaLookupServiceBegin pqs flags ph
+    none <- if ret < 0 then do
+        err <- getLastError
+        if err == wsaServiceNotFound  -- This error means that there are no devices
+            then pure True
+            else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
+      else
+        pure False
+    if none then
+        return []
+      else do
+        h <- peek ph
+        do
+            let bufSize = 5000
+            alloca $ \pResults -> allocaBytes bufSize $ \buf -> alloca $ \pdwSize -> do
+                poke pResults $ WSAQUERYSET {
+                    qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
+                    qsServiceInstanceName = nullPtr,
+                    qsNameSpace       = nS_BTH,
+                    qsNumberOfCsAddrs = 0,
+                    qsCsAddrs         = nullPtr,
+                    qsBlob            = nullPtr
+                  }
+                let loop acc = do
+                        poke pdwSize (fromIntegral bufSize)
+                        ret <- wsaLookupServiceNext h flags pdwSize pResults
+                        if ret < 0 then do
+                            err <- getLastError
+                            if err == wsaENoMore
+                                then pure $ reverse acc
+                                else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
+                          else do
+                            results <- peek pResults
+                            csAddrs <- peekArray (fromIntegral $ qsNumberOfCsAddrs results) (qsCsAddrs results)
+                            addrs <- mapM (peek . saSockaddr . csaRemoteAddr) csAddrs
+                            serviceName <- if qsServiceInstanceName results == nullPtr
+                                then pure Nothing
+                                else Just . C.pack <$> peekTString (qsServiceInstanceName results)
+                            loop $ reverse (map (\addr -> (bthAddr addr, serviceName)) addrs) ++ acc
+                loop []
+          `finally`
+            wsaLookupServiceEnd h
+

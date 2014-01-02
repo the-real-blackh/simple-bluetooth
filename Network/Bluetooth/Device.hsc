@@ -48,7 +48,14 @@ foreign import ccall safe "hci_read_remote_name" hci_read_remote_name
 
 deviceName :: Device -> IO ByteString
 #if defined(mingw32_HOST_OS)
-deviceName dev = fail "deviceName not defined"
+deviceName dev@(Device a _) = do
+    devs <- discover' a flags
+    print devs
+    return B.empty
+  where
+    flags = (#const LUP_CONTAINERS) .|.
+            (#const LUP_RETURN_ADDR) .|.
+            (#const LUP_RETURN_NAME)
 #else
 deviceName dev@(Device (Adapter _ dd) (BluetoothAddr bs)) = do
     retRef <- newIORef 0

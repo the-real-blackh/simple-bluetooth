@@ -118,55 +118,11 @@ instance Storable InquiryInfo where
 
 discover :: Adapter -> IO [Device]
 #if defined(mingw32_HOST_OS)
-discover a = alloca $ \pqs -> alloca $ \ph -> do
-    poke pqs $ WSAQUERYSET {
-        qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
-        qsNameSpace       = nS_BTH,
-        qsNumberOfCsAddrs = 0,
-        qsCsAddrs         = nullPtr,
-        qsBlob            = nullPtr
-      }
-    let flags = (#const LUP_CONTAINERS) .|.
-                (#const LUP_RETURN_ADDR) .|.
-                (#const LUP_FLUSHCACHE)
-    ret <- wsaLookupServiceBegin pqs flags ph
-    none <- if ret < 0 then do
-        err <- getLastError
-        if err == wsaServiceNotFound  -- This error means that there are no devices
-            then pure True
-            else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
-      else
-        pure False
-    if none then
-        return []
-      else do
-        h <- peek ph
-        do
-            let bufSize = 5000
-            alloca $ \pResults -> allocaBytes bufSize $ \buf -> alloca $ \pdwSize -> do
-                poke pResults $ WSAQUERYSET {
-                    qsSize            = fromIntegral $ sizeOf (undefined :: WSAQUERYSET SockAddrBTH),
-                    qsNameSpace       = nS_BTH,
-                    qsNumberOfCsAddrs = 0,
-                    qsCsAddrs         = nullPtr,
-                    qsBlob            = nullPtr
-                  }
-                let loop acc = do
-                        poke pdwSize (fromIntegral bufSize)
-                        ret <- wsaLookupServiceNext h flags pdwSize pResults
-                        if ret < 0 then do
-                            err <- getLastError
-                            if err == wsaENoMore
-                                then pure $ reverse acc
-                                else throwIO =<< BluetoothException "discover" <$> (peekTString =<< getErrorMessage err)
-                          else do
-                            results <- peek pResults
-                            csAddrs <- peekArray (fromIntegral $ qsNumberOfCsAddrs results) (qsCsAddrs results)
-                            addrs <- mapM (peek . saSockaddr . csaRemoteAddr) csAddrs
-                            loop $ reverse (map (Device a . bthAddr) addrs) ++ acc
-                loop []
-          `finally`
-            wsaLookupServiceEnd h
+discover a = map (Device a . fst) <$> discover' a flags
+  where
+    flags = (#const LUP_CONTAINERS) .|.
+            (#const LUP_RETURN_ADDR) {- .|.
+            (#const LUP_FLUSHCACHE) -}
 #else
 discover a@(Adapter dev_id _) = go 0  -- (#const IREQ_CACHE_FLUSH)
   where
