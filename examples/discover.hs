@@ -20,6 +20,5 @@ main = withSocketsDo $ do
         name <- (Just <$> deviceName dev)
             `catch` \(exc :: BluetoothException) -> return Nothing
         print name
-        putStrLn ""
         hFlush stdout
 

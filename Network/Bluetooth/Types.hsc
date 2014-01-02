@@ -22,8 +22,10 @@ import Foreign.C
 import Numeric
 
 
+#if !defined(mingw32_HOST_OS)
 foreign import ccall unsafe "strerror" strerror
     :: CInt -> CString
+#endif
 
 #if defined(mingw32_HOST_OS)
 data Adapter = Adapter deriving (Eq, Ord, Show)

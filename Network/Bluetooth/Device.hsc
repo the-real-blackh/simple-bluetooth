@@ -35,10 +35,14 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as B
 import qualified Data.ByteString.Unsafe as B
 import Data.IORef
+import Data.List (lookup)
 import Data.Word
 import Foreign
 import Foreign.C
 import GHC.Conc (threadWaitWrite)
+#if defined(mingw32_HOST_OS)
+import System.Win32.Types
+#endif
 
 
 data Device = Device Adapter BluetoothAddr deriving (Eq, Ord, Show)
@@ -48,10 +52,11 @@ foreign import ccall safe "hci_read_remote_name" hci_read_remote_name
 
 deviceName :: Device -> IO ByteString
 #if defined(mingw32_HOST_OS)
-deviceName dev@(Device a _) = do
+deviceName dev@(Device a addr) = do
     devs <- discover' a flags
-    print devs
-    return B.empty
+    case join $ lookup addr devs of
+        Just name -> return name
+        Nothing -> throwIO $ BluetoothException "deviceName" "device has no name"
   where
     flags = (#const LUP_CONTAINERS) .|.
             (#const LUP_RETURN_ADDR) .|.
@@ -142,11 +147,21 @@ openRFCOMM dev@(Device _ addr) channel = do
                     if errno == eOK
                         then return $ RFCOMMSocket s
                         else do
+#if defined(mingw32_HOST_OS)
+                            err <- getLastError
+                            throwIO =<< BluetoothException "openRFCOMM" <$> (peekTString =<< getErrorMessage err)
+#else
                             err <- peekCString (strerror errno_)
                             throwIO $ BluetoothException "openRFCOMM" err
+#endif
                 _ -> do
+#if defined(mingw32_HOST_OS)
+                    err <- getLastError
+                    throwIO =<< BluetoothException "openRFCOMM" <$> (peekTString =<< getErrorMessage err)
+#else
                     err <- peekCString (strerror errno_)
                     throwIO $ BluetoothException "openRFCOMM" err
+#endif
           else
             return $ RFCOMMSocket s
 
