@@ -8,7 +8,10 @@ module Network.Bluetooth.Device (
         sendRFCOMM,
         sendAllRFCOMM,
         closeRFCOMM,
-        module Network.Bluetooth.Types
+
+        Adapter,
+        BluetoothException(..),
+        BluetoothAddr(..),
     ) where
 
 #if defined(mingw32_HOST_OS)

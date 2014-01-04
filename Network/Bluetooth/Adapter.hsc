@@ -3,7 +3,10 @@ module Network.Bluetooth.Adapter (
         allAdapters,
         defaultAdapter,
         discover,
-        module Network.Bluetooth.Types
+
+        Adapter,
+        BluetoothException(..),
+        BluetoothAddr(..)
     ) where
 
 #if defined(mingw32_HOST_OS)
