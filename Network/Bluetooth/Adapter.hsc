@@ -123,8 +123,7 @@ discover :: Adapter -> IO [Device]
 #if defined(mingw32_HOST_OS)
 discover a = map (Device a . fst) <$> discover' a flags
   where
-    flags = (#const LUP_CONTAINERS) .|.
-            (#const LUP_RETURN_ADDR) .|.
+    flags = (#const LUP_RETURN_ADDR) .|.
             (#const LUP_FLUSHCACHE)
 #else
 discover a@(Adapter dev_id _) = go 0  -- (#const IREQ_CACHE_FLUSH)

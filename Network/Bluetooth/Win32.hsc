@@ -124,7 +124,7 @@ discover' a flags = alloca $ \pqs -> alloca $ \ph -> do
         qsCsAddrs         = nullPtr,
         qsBlob            = nullPtr
       }
-    ret <- wsaLookupServiceBegin pqs flags ph
+    ret <- wsaLookupServiceBegin pqs (flags .|. (#const LUP_CONTAINERS)) ph
     none <- if ret < 0 then do
         err <- getLastError
         if err == wsaServiceNotFound  -- This error means that there are no devices

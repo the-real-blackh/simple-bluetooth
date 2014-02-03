@@ -61,8 +61,7 @@ deviceName dev@(Device a addr) = do
         Just name -> return name
         Nothing -> throwIO $ BluetoothException "deviceName" "device has no name"
   where
-    flags = (#const LUP_CONTAINERS) .|.
-            (#const LUP_RETURN_ADDR) .|.
+    flags = (#const LUP_RETURN_ADDR) .|.
             (#const LUP_RETURN_NAME)
 #else
 deviceName dev@(Device (Adapter _ dd) (BluetoothAddr bs)) = do
